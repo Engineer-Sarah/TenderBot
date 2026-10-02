@@ -10,3 +10,10 @@ __pycache__/
 AI Prompt for App generation.txt
 AI Prompt for TenderBot.txt
 tendorbot.zip
+
+# Pipeline outputs
+outputs/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/

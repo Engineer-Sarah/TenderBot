@@ -1,0 +1,216 @@
+"""
+TenderBot Pakistan - HTTP API (connects the React frontend to the backend)
+==========================================================================
+Run:
+    uvicorn api:app --reload --port 8000
+
+Endpoints
+    GET    /api/health
+    GET    /api/tenders?category=IT      fast: scrape PPRA/Serper + quick RAG match
+    POST   /api/analyze  {"category"}    slow (1-5 min): full CrewAI pipeline
+    GET    /api/documents                list company documents (RAG)
+    POST   /api/documents                upload company documents (multipart "files")
+    DELETE /api/documents/{doc_id}       delete one document
+"""
+
+import json
+import re
+from datetime import date, datetime
+from typing import List, Optional
+
+from dotenv import load_dotenv
+from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+
+load_dotenv()
+
+app = FastAPI(title="TenderBot Pakistan API")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+INDUSTRY_MAP = {"it": "IT & Software", "software": "IT & Software"}
+
+
+# --------------------------------------------------------------------------- #
+# Helpers: backend dicts -> frontend `Tender` shape (see frontend/src/types.ts)
+# --------------------------------------------------------------------------- #
+def _status(score: float) -> str:
+    if score >= 75:
+        return "eligible"
+    if score >= 40:
+        return "partial"
+    return "not-eligible"
+
+
+def _days_left(text: str) -> int:
+    """Best-effort parse of a closing date; 30 if it can't be understood."""
+    for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y", "%B %d, %Y", "%d %B %Y", "%b %d, %Y"):
+        try:
+            return (datetime.strptime(text.strip(), fmt).date() - date.today()).days
+        except (ValueError, AttributeError):
+            continue
+    return 30
+
+
+def _tender(i: int, **kw) -> dict:
+    base = {
+        "id": f"s{i}",
+        "title": "Untitled tender",
+        "organization": "N/A",
+        "industry": "IT & Software",
+        "location": "Pakistan",
+        "budget": 0,
+        "budgetLabel": "N/A",
+        "deadline": "",
+        "daysLeft": 30,
+        "matchPercentage": 0,
+        "category": "Goods & Services",
+        "description": "",
+        "eligibilityStatus": "partial",
+        "aiSummary": "",
+        "requirements": [],
+        "documents": [],
+        "referenceNo": "",
+        "publishedDate": date.today().isoformat(),
+    }
+    base.update(kw)
+    return base
+
+
+def _from_scraped(i: int, raw: dict, category: str, match: float) -> dict:
+    closing = raw.get("closing_date", "") or ""
+    return _tender(
+        i,
+        title=raw.get("title", "Untitled tender"),
+        organization=raw.get("department") or raw.get("source", "N/A"),
+        industry=INDUSTRY_MAP.get(category.lower(), category),
+        deadline=closing,
+        daysLeft=_days_left(closing),
+        matchPercentage=int(round(match)),
+        description=raw.get("snippet") or raw.get("title", ""),
+        eligibilityStatus=_status(match),
+        aiSummary=(
+            f"Quick match {int(round(match))}% (document similarity). "
+            "Press 'Run AI analysis' for a full eligibility report."
+        ),
+        documents=[
+            {"id": f"d{j}", "name": u.rsplit("/", 1)[-1], "required": True}
+            for j, u in enumerate(raw.get("pdf_links", []))
+        ],
+        referenceNo=raw.get("detail_url") or raw.get("link", ""),
+    )
+
+
+def _quick_match(raw: dict) -> float:
+    """Cheap semantic match of one tender against the company docs (no LLM)."""
+    try:
+        from rag_engine import check_requirement
+
+        text = f"{raw.get('title', '')}. {raw.get('snippet', '')}"[:400]
+        return float(check_requirement(text, verify=False).get("match_percent", 0))
+    except Exception:  # noqa: BLE001 - no docs / no API key => 0
+        return 0.0
+
+
+def _parse_crew_json(text: str):
+    """Pull the JSON array out of the Writer agent's output."""
+    s = text
+    if "```json" in s:
+        s = s.split("```json")[1].split("```")[0]
+    elif "```" in s:
+        s = s.split("```")[1].split("```")[0]
+    else:
+        m = re.search(r"\[.*\]", s, re.S)
+        s = m.group(0) if m else s
+    data = json.loads(s.strip())
+    return data if isinstance(data, list) else [data]
+
+
+# --------------------------------------------------------------------------- #
+# Routes
+# --------------------------------------------------------------------------- #
+@app.get("/api/health")
+def health():
+    return {"status": "ok"}
+
+
+@app.get("/api/tenders")
+def get_tenders(category: str = "IT", limit: int = 10):
+    from scraper import smart_fetch_tenders
+
+    raws = smart_fetch_tenders(category=category, max_results=limit)
+    return [_from_scraped(i, r, category, _quick_match(r)) for i, r in enumerate(raws, 1)]
+
+
+class AnalyzeRequest(BaseModel):
+    category: str = "IT"
+
+
+@app.post("/api/analyze")
+def analyze(req: AnalyzeRequest):
+    """Full 3-agent CrewAI run. Slow: the frontend shows a spinner."""
+    from agents import run_tender_crew
+
+    try:
+        reports = _parse_crew_json(run_tender_crew(category=req.category))
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise HTTPException(502, f"AI pipeline returned unreadable output: {exc}")
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(500, f"AI pipeline failed: {exc}")
+
+    out = []
+    for i, r in enumerate(reports, 1):
+        score = float(r.get("eligibility_score") or 0)
+        met = r.get("met_requirements") or []
+        gaps = r.get("gap_analysis") or []
+        reqs = [{"id": f"m{j}", "label": str(x), "matched": True, "category": "Met"} for j, x in enumerate(met)]
+        reqs += [{"id": f"g{j}", "label": str(x), "matched": False, "category": "Gap"} for j, x in enumerate(gaps)]
+        closing = r.get("closing_date", "") or ""
+        summary = " ".join(x for x in [r.get("summary", ""), r.get("eligibility_reason", "")] if x)
+        out.append(
+            _tender(
+                i,
+                title=r.get("title", "Untitled tender"),
+                organization=r.get("department", "N/A"),
+                industry=INDUSTRY_MAP.get(req.category.lower(), req.category),
+                deadline=closing,
+                daysLeft=_days_left(closing),
+                matchPercentage=int(round(score)),
+                description=r.get("summary", ""),
+                eligibilityStatus=_status(score),
+                aiSummary=summary,
+                requirements=reqs,
+                coverLetter=r.get("cover_letter", ""),
+            )
+        )
+    return out
+
+
+@app.get("/api/documents")
+def documents():
+    from rag_engine import list_documents
+
+    try:
+        return [{"id": d["doc_id"], "name": d["source"], "chunks": d["chunks"]} for d in list_documents()]
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(500, f"Could not list documents: {exc}")
+
+
+@app.post("/api/documents")
+async def upload(files: List[UploadFile] = File(...)):
+    from rag_engine import upload_docs
+
+    payload = [(f.filename or "file", await f.read()) for f in files]
+    return upload_docs(payload)  # per-file {filename, status, doc_id, chunks, error}
+
+
+@app.delete("/api/documents/{doc_id}")
+def delete_document_route(doc_id: str):
+    from rag_engine import delete_document
+
+    return {"deleted_chunks": delete_document(doc_id)}
