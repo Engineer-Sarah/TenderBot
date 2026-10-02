@@ -15,6 +15,7 @@ Endpoints
 
 import json
 import re
+import os
 from datetime import date, datetime
 from typing import List, Optional
 
@@ -154,10 +155,46 @@ class AnalyzeRequest(BaseModel):
 @app.post("/api/analyze")
 def analyze(req: AnalyzeRequest):
     """Full 3-agent CrewAI run. Slow: the frontend shows a spinner."""
-    from agents import run_tender_crew
-
     try:
-        reports = _parse_crew_json(run_tender_crew(category=req.category))
+        from google import genai
+        from google.genai import types
+
+        key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+        if not key:
+            raise ValueError("GEMINI_API_KEY is not configured")
+
+        # Keep the Vercel deployment lightweight: use Gemini directly instead of
+        # importing the optional CrewAI stack (which exceeds Vercel's 500 MB
+        # Python function bundle limit).
+        raws = __import__("scraper").smart_fetch_tenders(category=req.category, max_results=5)
+        if not raws:
+            return []
+
+        context = json.dumps(raws, ensure_ascii=False, indent=2)[:30000]
+        prompt = f"""
+Analyze these Pakistani government tenders for a software/IT company.
+
+Return ONLY a JSON array. For each tender include exactly:
+title, department, closing_date, summary, eligibility_score,
+eligibility_reason, met_requirements, gap_analysis, cover_letter.
+
+eligibility_score must be a number from 0 to 100. Be conservative and do
+not invent company credentials. If company credentials are unavailable,
+state that in gap_analysis.
+
+TENDERS:
+{context}
+"""
+        client = genai.Client(api_key=key)
+        response = client.models.generate_content(
+            model=os.getenv("AGENT_MODEL", "gemini-3.8-flash"),
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                temperature=0.1,
+                response_mime_type="application/json",
+            ),
+        )
+        reports = _parse_crew_json(response.text or "[]")
     except (json.JSONDecodeError, ValueError) as exc:
         raise HTTPException(502, f"AI pipeline returned unreadable output: {exc}")
     except Exception as exc:  # noqa: BLE001
