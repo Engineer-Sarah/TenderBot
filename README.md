@@ -41,3 +41,12 @@ The system combines **Retrieval-Augmented Generation (RAG), semantic similarity 
 
 It keeps track of company documents (NTN, PEC, audit reports, experience letters) and answers questions using ***only*** information from those documents. If the required information is not found in the documents, it does not call the LLM, completely preventing hallucinations!
 
+## Notes
+* One Chroma collection per `company_id` (data isolation)
+* Re-uploading the same file is safe (content-hash ids -> upsert)
+* Scanned/image PDFs have no text layer -> clear error message (OCR not supported)
+* Thresholds `MIN_SIMILARITY=0.55` / strong `0.75` are tunable via env
+* Uses the current `google-genai` SDK (the older `google-generativeai` package is deprecated)
+
+
+
