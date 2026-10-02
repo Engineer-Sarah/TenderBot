@@ -23,20 +23,20 @@ interface ApiDoc {
 }
 
 export const api = {
-  health: () => request<{ status: string }>('/api/health'),
+  health: () => request<{ status: string }>('/health'),
 
   tenders: (category = 'IT') =>
-    request<Tender[]>(`/api/tenders?category=${encodeURIComponent(category)}`),
+    request<Tender[]>(`/tenders?category=${encodeURIComponent(category)}`),
 
   analyze: (category = 'IT') =>
-    request<Tender[]>('/api/analyze', {
+    request<Tender[]>('/analyze', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ category }),
     }),
 
   documents: async (): Promise<UploadedFile[]> => {
-    const docs = await request<ApiDoc[]>('/api/documents');
+    const docs = await request<ApiDoc[]>('/documents');
     const today = new Date().toISOString().slice(0, 10);
     return docs.map((d) => ({
       id: d.id,
@@ -50,14 +50,14 @@ export const api = {
   upload: (files: File[]) => {
     const form = new FormData();
     files.forEach((f) => form.append('files', f));
-    return request<{ filename: string; status: string; error?: string }[]>('/api/documents', {
+    return request<{ filename: string; status: string; error?: string }[]>('/documents', {
       method: 'POST',
       body: form,
     });
   },
 
   deleteDocument: (id: string) =>
-    request<{ deleted_chunks: number }>(`/api/documents/${encodeURIComponent(id)}`, {
+    request<{ deleted_chunks: number }>(`/documents/${encodeURIComponent(id)}`, {
       method: 'DELETE',
     }),
 };
