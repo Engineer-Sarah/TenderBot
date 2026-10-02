@@ -47,7 +47,8 @@ from rag_engine import query_docs
 # CrewAI uses litellm under the hood. For Gemini models, the format is:
 #   "gemini/<model-name>"
 # litellm automatically picks up GEMINI_API_KEY from os.environ.
-LLM_MODEL = "gemini/gemini-2.0-flash"
+# Override in .env with AGENT_MODEL=<model name> if Google retires this one
+LLM_MODEL = "gemini/" + os.getenv("AGENT_MODEL", "gemini-3.8-flash")
 
 
 # ===================================================================
