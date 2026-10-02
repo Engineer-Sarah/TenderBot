@@ -26,9 +26,13 @@ The system combines **Retrieval-Augmented Generation (RAG), semantic similarity 
 
 ### Technology Stack
 
-**Frontend:** Streamlit
-**PDF Processing:** pypdf
-**Vector Database:** FAISS
-**Embeddings:** Sentence Transformers — `all-MiniLM-L6-v2`
-**LLM:** Groq / Llama 3.3 70B
-**Language:** Python
+* **Frontend:** Streamlit
+* **PDF Processing:** pypdf
+* **Document Processing:** pypdf, python-docx, and text processing
+* **Vector Database:** `FAISS` and `ChromaDB` -- **FAISS** for tender retrieval, **ChromaDB** for company document knowledge base
+* **Embeddings:** Sentence Transformers `all-MiniLM-L6-v2` and Google Gemini `gemini-embedding-001`
+* **RAG:** Retrieval-Augmented Generation for tender and company document knowledge bases
+* **LLM:** Groq / Llama 3.3 70B and Google Gemini
+* **Semantic Matching:** Embedding-based similarity matching between tender requirements and company credentials
+* **Programming Language:** Python
+* **Languages Supported:** English + Urdu
