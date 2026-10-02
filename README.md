@@ -6,11 +6,11 @@ TendorBot is an AI-powered tender intelligence and compliance assistant designed
 
 The system combines **Retrieval-Augmented Generation (RAG), semantic similarity search, document processing, and LLM-powered workflow automation** to turn lengthy tender documents into actionable compliance insights.
 
-### Core Workflow
+## Core Workflow
 
 **Tender PDF → Requirement Extraction → Semantic Matching → Eligibility Analysis → Document Generation**
 
-### Key Features
+## Key Features
 
 * 📄 PPRA tender PDF parsing and analysis
 * 🔎 RAG-based retrieval from tender documents
@@ -24,7 +24,7 @@ The system combines **Retrieval-Augmented Generation (RAG), semantic similarity 
 * 🌐 English + Urdu support
 * ⚡ Fast LLM inference with Groq
 
-### Technology Stack
+## Technology Stack
 
 * **Frontend:** Streamlit
 * **PDF Processing:** pypdf
@@ -36,3 +36,8 @@ The system combines **Retrieval-Augmented Generation (RAG), semantic similarity 
 * **Semantic Matching:** Embedding-based similarity matching between tender requirements and company credentials
 * **Programming Language:** Python
 * **Languages Supported:** English + Urdu
+
+## Company Knowledge Base
+
+It keeps track of company documents (NTN, PEC, audit reports, experience letters) and answers questions using ***only*** information from those documents. If the required information is not found in the documents, it does not call the LLM, completely preventing hallucinations!
+
