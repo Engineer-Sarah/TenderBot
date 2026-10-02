@@ -1,0 +1,12 @@
+.env
+chroma_db/
+test_chroma/
+tmpdb/
+tmpdb2/
+venv/
+.venv313/
+__pycache__/
+*.pyc
+AI Prompt for App generation.txt
+AI Prompt for TenderBot.txt
+tendorbot.zip
