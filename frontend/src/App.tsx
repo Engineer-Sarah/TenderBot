@@ -63,7 +63,8 @@ function App() {
     setError(null);
     try {
       const list = await api.analyze('IT', companyFiles);
-      if (list.length > 0) setTenders(list);
+      // AI analysis must replace the dashboard data, even if the backend returns an empty list.
+      setTenders(list);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'AI analysis failed');
     } finally {
