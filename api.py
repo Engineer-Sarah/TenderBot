@@ -180,7 +180,7 @@ async def analyze(category: str = Form("IT"), files: Optional[List[UploadFile]] 
                 details = "; ".join(f"{r.get('filename')}: {r.get('error')}" for r in failed)
                 raise HTTPException(400, f"Company document indexing failed: {details}")
 
-        raws = __import__("scraper").smart_fetch_tenders(category=req.category, max_results=5)
+        raws = __import__("scraper").smart_fetch_tenders(category=req.category, max_results=8)
         if not raws:
             return []
 
