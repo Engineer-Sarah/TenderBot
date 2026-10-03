@@ -655,6 +655,22 @@ class RAGEngine:
         return result
 
     # -- management ---------------------------------------------------------- #
+    def document_context(self, company_id: str = "default", max_chars: int = 24000) -> str:
+        """Return the uploaded company document text for grounded analysis."""
+        coll = self._collection(company_id)
+        data = coll.get(include=["documents", "metadatas"])
+        blocks = []
+        used = 0
+        for doc, meta in zip(data.get("documents") or [], data.get("metadatas") or []):
+            source = meta.get("source", "company document")
+            page = meta.get("page_start", "?")
+            block = f"[{source} p.{page}]\n{doc}"
+            if used + len(block) > max_chars:
+                break
+            blocks.append(block)
+            used += len(block)
+        return "\n\n---\n\n".join(blocks)
+
     def list_documents(self, company_id: str = "default") -> List[Dict[str, Any]]:
         """One entry per uploaded document: {"doc_id", "source", "chunks"}."""
         data = self._collection(company_id).get(include=["metadatas"])
