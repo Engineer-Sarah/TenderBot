@@ -180,9 +180,24 @@ async def analyze(category: str = Form("IT"), files: Optional[List[UploadFile]] 
                 details = "; ".join(f"{r.get('filename')}: {r.get('error')}" for r in failed)
                 raise HTTPException(400, f"Company document indexing failed: {details}")
 
-        raws = __import__("scraper").smart_fetch_tenders(category=req.category, max_results=8)
+        scraper = __import__("scraper")
+        raws = scraper.smart_fetch_tenders(category=req.category, max_results=8)
         if not raws:
             return []
+
+        # Fetch actual tender detail text/requirements. Matching only the tender
+        # title can produce meaningless 0% scores.
+        for raw in raws:
+            detail_url = raw.get("detail_url") or raw.get("link") or ""
+            raw["full_text"] = raw.get("snippet", "")
+            raw["requirements_raw"] = ""
+            if detail_url:
+                try:
+                    detail = scraper.scrape_tender_detail(detail_url)
+                    raw["full_text"] = detail.get("full_text", "") or raw["full_text"]
+                    raw["requirements_raw"] = detail.get("requirements_raw", "")
+                except Exception:
+                    pass
 
         # IMPORTANT: the company PDF upload must actually influence AI analysis.
         # The previous implementation sent only tender data to Gemini, so uploaded
@@ -197,10 +212,11 @@ async def analyze(category: str = Form("IT"), files: Optional[List[UploadFile]] 
                     str(x or "")
                     for x in (
                         raw.get("title", ""),
-                        raw.get("snippet", ""),
                         raw.get("department", ""),
+                        raw.get("requirements_raw", ""),
+                        raw.get("full_text", ""),
                     )
-                )[:1200]
+                )[:4000]
                 evidence = query_docs(q, generate=False)
                 company_evidence.append(
                     {
@@ -215,7 +231,9 @@ async def analyze(category: str = Form("IT"), files: Optional[List[UploadFile]] 
 
         context = json.dumps(
             [
-                {"tender": raw, "company_document_evidence": evidence}
+                {"tender": {**raw, "full_text": str(raw.get("full_text", ""))[:12000],
+                            "requirements_raw": str(raw.get("requirements_raw", ""))[:5000]},
+                 "company_document_evidence": evidence}
                 for raw, evidence in zip(raws, company_evidence)
             ],
             ensure_ascii=False,
@@ -224,7 +242,8 @@ async def analyze(category: str = Form("IT"), files: Optional[List[UploadFile]] 
 
         prompt = f"""
 Analyze these Pakistani government tenders for a software/IT company using the
-uploaded company-document evidence supplied with EACH tender.
+ACTUAL tender detail/requirements and the uploaded company-document evidence supplied
+with EACH tender.
 
 CRITICAL RULES:
 1. The company-document evidence is the source of truth for company credentials.
