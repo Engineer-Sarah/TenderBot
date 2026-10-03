@@ -229,6 +229,11 @@ async def analyze(category: str = Form("IT"), files: Optional[List[UploadFile]] 
         except Exception as exc:
             raise HTTPException(500, f"Company document retrieval failed: {exc}")
 
+        from rag_engine import get_engine
+        company_document_text = get_engine().document_context(max_chars=24000)
+        if not company_document_text:
+            raise HTTPException(400, "No readable company document text is available for AI analysis.")
+
         context = json.dumps(
             [
                 {"tender": {**raw, "full_text": str(raw.get("full_text", ""))[:12000],
@@ -261,7 +266,10 @@ eligibility_reason, met_requirements, gap_analysis, cover_letter.
 eligibility_score must be a number from 0 to 100 and should reflect the match
 between the tender requirements and the uploaded company documents.
 
-TENDERS + COMPANY DOCUMENT EVIDENCE:
+UPLOADED COMPANY DOCUMENT TEXT (SOURCE OF TRUTH):
+{company_document_text}
+
+TENDERS + RETRIEVED COMPANY EVIDENCE:
 {context}
 """
         client = genai.Client(api_key=key)
