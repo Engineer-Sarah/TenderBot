@@ -14,6 +14,9 @@ function App() {
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
   const [selectedTender, setSelectedTender] = useState<Tender | null>(null);
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>(initialUploadedFiles);
+  // Keep the actual File objects for this browser session so Vercel serverless
+  // analysis can index the same PDF in the same request (no /tmp persistence dependency).
+  const [companyFiles, setCompanyFiles] = useState<File[]>([]);
 
   const [readIds, setReadIds] = useState<Set<string>>(new Set());
 
@@ -59,14 +62,14 @@ function App() {
     setAnalyzing(true);
     setError(null);
     try {
-      const list = await api.analyze('IT');
+      const list = await api.analyze('IT', companyFiles);
       if (list.length > 0) setTenders(list);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'AI analysis failed');
     } finally {
       setAnalyzing(false);
     }
-  }, []);
+  }, [companyFiles]);
 
   // Mock tenders se notifications banti hain: deadline qareeb ya high match
   const notifications = useMemo<AppNotification[]>(() => {
@@ -132,6 +135,11 @@ function App() {
     async (files: File[]) => {
       if (live) {
         try {
+          setCompanyFiles((prev) => {
+            const byName = new Map(prev.map((f) => [f.name, f]));
+            files.forEach((f) => byName.set(f.name, f));
+            return Array.from(byName.values());
+          });
           const results = await api.upload(files);
           const failed = results.filter((r) => r.status !== 'ok');
           if (failed.length) setError(`Upload failed: ${failed.map((f) => f.filename).join(', ')}`);
