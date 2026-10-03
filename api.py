@@ -170,19 +170,65 @@ def analyze(req: AnalyzeRequest):
         if not raws:
             return []
 
-        context = json.dumps(raws, ensure_ascii=False, indent=2)[:30000]
+        # IMPORTANT: the company PDF upload must actually influence AI analysis.
+        # The previous implementation sent only tender data to Gemini, so uploaded
+        # company documents were indexed but never read by /api/analyze.
+        # Retrieve grounded evidence from the RAG knowledge base for every tender.
+        try:
+            from rag_engine import query_docs
+
+            company_evidence = []
+            for raw in raws:
+                q = " ".join(
+                    str(x or "")
+                    for x in (
+                        raw.get("title", ""),
+                        raw.get("snippet", ""),
+                        raw.get("department", ""),
+                    )
+                )[:1200]
+                evidence = query_docs(q, generate=False)
+                company_evidence.append(
+                    {
+                        "tender": raw.get("title", ""),
+                        "found": evidence.get("found", False),
+                        "match_percent": evidence.get("match_percent", 0),
+                        "sources": evidence.get("sources", []),
+                    }
+                )
+        except Exception as exc:
+            raise HTTPException(500, f"Company document retrieval failed: {exc}")
+
+        context = json.dumps(
+            [
+                {"tender": raw, "company_document_evidence": evidence}
+                for raw, evidence in zip(raws, company_evidence)
+            ],
+            ensure_ascii=False,
+            indent=2,
+        )[:30000]
+
         prompt = f"""
-Analyze these Pakistani government tenders for a software/IT company.
+Analyze these Pakistani government tenders for a software/IT company using the
+uploaded company-document evidence supplied with EACH tender.
+
+CRITICAL RULES:
+1. The company-document evidence is the source of truth for company credentials.
+2. Never claim a certificate, license, turnover, experience, registration, or
+   capability is present unless the evidence supports it.
+3. If evidence is missing or weak, put that item in gap_analysis and do not
+   award credit for it.
+4. The uploaded company PDF MUST affect eligibility_score.
+5. Do not use the demo/mock company profile as evidence.
 
 Return ONLY a JSON array. For each tender include exactly:
 title, department, closing_date, summary, eligibility_score,
 eligibility_reason, met_requirements, gap_analysis, cover_letter.
 
-eligibility_score must be a number from 0 to 100. Be conservative and do
-not invent company credentials. If company credentials are unavailable,
-state that in gap_analysis.
+eligibility_score must be a number from 0 to 100 and should reflect the match
+between the tender requirements and the uploaded company documents.
 
-TENDERS:
+TENDERS + COMPANY DOCUMENT EVIDENCE:
 {context}
 """
         client = genai.Client(api_key=key)
