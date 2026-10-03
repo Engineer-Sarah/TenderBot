@@ -28,12 +28,15 @@ export const api = {
   tenders: (category = 'IT') =>
     request<Tender[]>(`/tenders?category=${encodeURIComponent(category)}`),
 
-  analyze: (category = 'IT') =>
-    request<Tender[]>('/analyze', {
+  analyze: (category = 'IT', files: File[] = []) => {
+    const form = new FormData();
+    form.append('category', category);
+    files.forEach((f) => form.append('files', f));
+    return request<Tender[]>('/analyze', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ category }),
-    }),
+      body: form,
+    });
+  },
 
   documents: async (): Promise<UploadedFile[]> => {
     const docs = await request<ApiDoc[]>('/documents');
