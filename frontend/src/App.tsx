@@ -6,6 +6,7 @@ import { TenderDetails } from '@/components/TenderDetails';
 import { MyCompany } from '@/components/MyCompany';
 import { mockTenders, companyProfile, initialUploadedFiles } from '@/mockData';
 import { api } from '@/api';
+import { analyzeInCloud } from '@/cloudAnalyze';
 import type { Tender, UploadedFile, AppNotification } from '@/types';
 
 type Tab = 'dashboard' | 'details' | 'company';
@@ -41,8 +42,8 @@ function App() {
 
       try {
         const [list, docs] = await Promise.all([api.tenders('IT'), api.documents().catch(() => null)]);
-        setTenders(list);
-        if (docs) setUploadedFiles(docs);
+        if (list.length > 0) setTenders(list); // keep the sample tenders if scraping finds nothing
+        void docs; // uploaded files are tracked in the browser (serverless storage is not persistent)
       } catch {
         // The backend is connected even if a slower data source temporarily fails.
       }
@@ -62,15 +63,14 @@ function App() {
     setAnalyzing(true);
     setError(null);
     try {
-      const list = await api.analyze('IT', companyFiles);
-      // AI analysis must replace the dashboard data, even if the backend returns an empty list.
-      setTenders(list);
+      // Gemini compares the uploaded PDFs with the tenders on screen
+      setTenders(await analyzeInCloud(tenders, companyFiles));
     } catch (e) {
       setError(e instanceof Error ? e.message : 'AI analysis failed');
     } finally {
       setAnalyzing(false);
     }
-  }, [companyFiles]);
+  }, [tenders, companyFiles]);
 
   // Mock tenders se notifications banti hain: deadline qareeb ya high match
   const notifications = useMemo<AppNotification[]>(() => {
@@ -132,57 +132,30 @@ function App() {
     setActiveTab('company');
   }, []);
 
-  const handleAddFiles = useCallback(
-    async (files: File[]) => {
-      if (live) {
-        try {
-          setCompanyFiles((prev) => {
-            const byName = new Map(prev.map((f) => [f.name, f]));
-            files.forEach((f) => byName.set(f.name, f));
-            return Array.from(byName.values());
-          });
-          const results = await api.upload(files);
-          const failed = results.filter((r) => r.status !== 'ok');
-          if (failed.length) setError(`Upload failed: ${failed.map((f) => f.filename).join(', ')}`);
-          const docs = await api.documents();
-          // keep real sizes for files uploaded in this session
-          setUploadedFiles(
-            docs.map((d) => {
-              const f = files.find((x) => x.name === d.name);
-              return f ? { ...d, size: f.size } : d;
-            }),
-          );
-          return;
-        } catch (e) {
-          setError(e instanceof Error ? e.message : 'Upload failed');
-          return;
-        }
-      }
-      const newFiles: UploadedFile[] = files.map((file, index) => ({
-        id: `f_${Date.now()}_${index}`,
-        name: file.name,
-        size: file.size,
-        type: file.type || 'application/octet-stream',
-        uploadDate: new Date().toISOString().slice(0, 10),
-      }));
-      setUploadedFiles((prev) => [...prev, ...newFiles]);
-    },
-    [live],
-  );
+  const handleAddFiles = useCallback(async (files: File[]) => {
+    // Keep the real File objects in the browser: the analysis sends them inline.
+    setCompanyFiles((prev) => {
+      const byName = new Map(prev.map((f) => [f.name, f]));
+      files.forEach((f) => byName.set(f.name, f));
+      return Array.from(byName.values());
+    });
+    const newFiles: UploadedFile[] = files.map((file, index) => ({
+      id: `f_${Date.now()}_${index}`,
+      name: file.name,
+      size: file.size,
+      type: file.type || 'application/octet-stream',
+      uploadDate: new Date().toISOString().slice(0, 10),
+    }));
+    setUploadedFiles((prev) => [...prev, ...newFiles]);
+  }, []);
 
   const handleDeleteFile = useCallback(
     async (id: string) => {
-      if (live) {
-        try {
-          await api.deleteDocument(id);
-        } catch (e) {
-          setError(e instanceof Error ? e.message : 'Delete failed');
-          return;
-        }
-      }
+      const gone = uploadedFiles.find((f) => f.id === id);
+      if (gone) setCompanyFiles((prev) => prev.filter((f) => f.name !== gone.name));
       setUploadedFiles((prev) => prev.filter((f) => f.id !== id));
     },
-    [live],
+    [uploadedFiles],
   );
 
   return (
@@ -214,23 +187,24 @@ function App() {
                 {connecting ? 'Connecting to backend...' : live ? 'Live data from backend' : 'Demo data - backend not running'}
               </span>
               {live && (
-                <>
-                  <button
-                    onClick={() => void loadTenders()}
-                    disabled={loading || analyzing}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-edge bg-card px-3 py-1.5 text-ink hover:bg-canvas disabled:opacity-50"
-                  >
-                    <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> Refresh
-                  </button>
-                  <button
-                    onClick={() => void handleAnalyze()}
-                    disabled={loading || analyzing}
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-ink px-3 py-1.5 text-white hover:opacity-90 disabled:opacity-50"
-                  >
-                    {analyzing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-                    {analyzing ? 'Analyzing (1-5 min)...' : 'Run AI analysis'}
-                  </button>
-                </>
+                <button
+                  onClick={() => void loadTenders()}
+                  disabled={loading || analyzing}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-edge bg-card px-3 py-1.5 text-ink hover:bg-canvas disabled:opacity-50"
+                >
+                  <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> Refresh
+                </button>
+              )}
+              <button
+                onClick={() => void handleAnalyze()}
+                disabled={loading || analyzing}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-ink px-3 py-1.5 text-white hover:opacity-90 disabled:opacity-50"
+              >
+                {analyzing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                {analyzing ? 'Analyzing (10-40 sec)...' : 'Run AI analysis'}
+              </button>
+              {companyFiles.length === 0 && (
+                <span className="text-xs text-muted">Pehle My Company mein apni PDF upload karein.</span>
               )}
               {error && <span className="text-red-600">{error}</span>}
             </div>

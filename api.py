@@ -360,6 +360,85 @@ TENDERS + RETRIEVED COMPANY EVIDENCE:
     return out
 
 
+# --------------------------------------------------------------------------- #
+# Direct cloud analysis (works on Vercel: no scraper, no database, no /tmp)
+# The browser sends the company PDFs + the tenders on screen; Gemini compares them.
+# --------------------------------------------------------------------------- #
+class CloudFile(BaseModel):
+    name: str = "file.pdf"
+    mimeType: str = "application/pdf"
+    data: str  # base64
+
+
+class CloudTender(BaseModel):
+    id: str
+    title: str = ""
+    organization: str = ""
+    description: str = ""
+    budget: str = ""
+    deadline: str = ""
+    requirements: List[str] = []
+
+
+class CloudRequest(BaseModel):
+    files: List[CloudFile] = []
+    tenders: List[CloudTender]
+
+
+@app.post("/api/cloud-analyze")
+def cloud_analyze(req: CloudRequest):
+    import base64
+
+    key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    if not key:
+        raise HTTPException(500, "GEMINI_API_KEY is not set in Vercel Environment Variables")
+    if not req.files:
+        raise HTTPException(400, "Upload at least one company PDF first (My Company tab).")
+    if not req.tenders:
+        raise HTTPException(400, "No tenders to analyze.")
+
+    from google import genai
+    from google.genai import types
+
+    parts = [
+        types.Part.from_bytes(data=base64.b64decode(f.data), mime_type=f.mimeType or "application/pdf")
+        for f in req.files[:5]
+    ]
+    prompt = (
+        "You are a Pakistani government-tender eligibility analyst (PPRA rules, PEC license, "
+        "NTN, turnover, experience, certifications).\n"
+        "The attached documents are the company's OWN documents and are the ONLY evidence of "
+        "what the company has. Never claim a certificate, licence, turnover or experience that "
+        "is not in them.\n\n"
+        "TENDERS (JSON):\n" + json.dumps([t.model_dump() for t in req.tenders], ensure_ascii=False) + "\n\n"
+        "Return ONLY a JSON array with one object per tender, exactly these keys: "
+        "id (same as given), matchPercentage (integer 0-100), summary (2 sentences explaining the "
+        "score), met (list of requirements the documents prove), gaps (list of requirements "
+        "missing or unproven). The uploaded documents MUST change the score."
+    )
+    parts.append(types.Part.from_text(text=prompt))
+
+    models = []
+    for m in (os.getenv("AGENT_MODEL"), "gemini-2.5-flash", "gemini-3.8-flash"):
+        if m and m not in models:
+            models.append(m)
+
+    client = genai.Client(api_key=key)
+    last: Exception | None = None
+    for m in models:
+        try:
+            resp = client.models.generate_content(
+                model=m,
+                contents=[types.Content(role="user", parts=parts)],
+                config=types.GenerateContentConfig(temperature=0.2, response_mime_type="application/json"),
+            )
+            results = _parse_crew_json(resp.text or "[]")
+            return {"results": results, "model": m}
+        except Exception as exc:  # noqa: BLE001 - try the next model
+            last = exc
+    raise HTTPException(502, f"Gemini failed: {last}")
+
+
 @app.get("/api/documents")
 def documents():
     from rag_engine import list_documents
