@@ -67,7 +67,7 @@ if not logger.handlers:
 # --------------------------------------------------------------------------- #
 # Configuration
 # --------------------------------------------------------------------------- #
-CHROMA_DIR = os.getenv("CHROMA_DIR", "./chroma_db")
+CHROMA_DIR = os.getenv("CHROMA_DIR", "/tmp/tenderbot_chroma" if os.getenv("VERCEL") else "./chroma_db")
 EMBED_MODEL = os.getenv("EMBED_MODEL", "gemini-embedding-001")
 EMBED_DIM = int(os.getenv("EMBED_DIM", "768"))
 LLM_MODEL = os.getenv("LLM_MODEL", "gemini-3.8-flash")
