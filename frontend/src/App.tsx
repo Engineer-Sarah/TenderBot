@@ -20,21 +20,33 @@ function App() {
   // Backend connection: live data when the API is running, demo data otherwise
   const [tenders, setTenders] = useState<Tender[]>(mockTenders);
   const [live, setLive] = useState(false);
+  const [connecting, setConnecting] = useState(true);
   const [loading, setLoading] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const loadTenders = useCallback(async () => {
     setLoading(true);
+    setConnecting(true);
     setError(null);
     try {
-      const [list, docs] = await Promise.all([api.tenders('IT'), api.documents().catch(() => null)]);
+      // Health is intentionally checked first so the UI can switch to Live
+      // as soon as the Vercel backend wakes up, instead of waiting for the
+      // slower tender scraper and document listing.
+      await api.health();
       setLive(true);
-      if (list.length > 0) setTenders(list);
-      if (docs) setUploadedFiles(docs);
+
+      try {
+        const [list, docs] = await Promise.all([api.tenders('IT'), api.documents().catch(() => null)]);
+        if (list.length > 0) setTenders(list);
+        if (docs) setUploadedFiles(docs);
+      } catch {
+        // The backend is connected even if a slower data source temporarily fails.
+      }
     } catch {
-      setLive(false); // backend not running -> keep demo data
+      setLive(false); // backend not reachable -> keep demo data
     } finally {
+      setConnecting(false);
       setLoading(false);
     }
   }, []);
@@ -183,10 +195,14 @@ function App() {
             <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 pt-4 flex flex-wrap items-center gap-3 text-sm">
               <span
                 className={`rounded-full px-3 py-1 text-xs font-medium ${
-                  live ? 'bg-green-100 text-green-800' : 'bg-amber-100 text-amber-800'
+                  connecting
+                    ? 'bg-amber-100 text-amber-800'
+                    : live
+                      ? 'bg-green-100 text-green-800'
+                      : 'bg-amber-100 text-amber-800'
                 }`}
               >
-                {live ? 'Live data from backend' : 'Demo data - backend not running'}
+                {connecting ? 'Connecting to backend...' : live ? 'Live data from backend' : 'Demo data - backend not running'}
               </span>
               {live && (
                 <>
