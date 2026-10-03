@@ -70,7 +70,7 @@ if not logger.handlers:
 CHROMA_DIR = os.getenv("CHROMA_DIR", "/tmp/tenderbot_chroma" if os.getenv("VERCEL") else "./chroma_db")
 EMBED_MODEL = os.getenv("EMBED_MODEL", "gemini-embedding-001")
 EMBED_DIM = int(os.getenv("EMBED_DIM", "768"))
-LLM_MODEL = os.getenv("LLM_MODEL", "gemini-3.8-flash")
+LLM_MODEL = os.getenv("LLM_MODEL", "gemini-2.5-flash")
 CHUNK_WORDS = int(os.getenv("CHUNK_WORDS", "500"))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "50"))
 MIN_SIMILARITY = float(os.getenv("MIN_SIMILARITY", "0.55"))
