@@ -78,7 +78,7 @@ STRONG_SIMILARITY = 0.75
 
 EMBED_BATCH_SIZE = 50  # Gemini allows up to 100 texts per request; stay safe
 MAX_RETRIES = 4
-MAX_FILE_BYTES = 25 * 1024 * 1024  # 25 MB per file
+MAX_FILE_BYTES = 4 * 1024 * 1024 if os.getenv("VERCEL") else 25 * 1024 * 1024
 SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".txt"}
 
 FileInput = Union[str, os.PathLike, Tuple[str, bytes], Any]  # path | (name, bytes) | file-like
