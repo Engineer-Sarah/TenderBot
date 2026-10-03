@@ -20,7 +20,7 @@ from datetime import date, datetime
 from typing import List, Optional
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -153,7 +153,8 @@ class AnalyzeRequest(BaseModel):
 
 
 @app.post("/api/analyze")
-def analyze(req: AnalyzeRequest):
+async def analyze(category: str = Form("IT"), files: Optional[List[UploadFile]] = File(None)):
+    req = AnalyzeRequest(category=category)
     """Full 3-agent CrewAI run. Slow: the frontend shows a spinner."""
     try:
         from google import genai
@@ -166,6 +167,19 @@ def analyze(req: AnalyzeRequest):
         # Keep the Vercel deployment lightweight: use Gemini directly instead of
         # importing the optional CrewAI stack (which exceeds Vercel's 500 MB
         # Python function bundle limit).
+        # IMPORTANT: Vercel serverless instances do not guarantee /tmp persistence.
+        # If the browser has the uploaded company files, index them in THIS SAME
+        # invocation before retrieval, so the analysis always sees the PDF.
+        if files:
+            from rag_engine import upload_docs
+
+            payload = [(f.filename or "file", await f.read()) for f in files]
+            upload_results = upload_docs(payload)
+            failed = [r for r in upload_results if r.get("status") != "ok"]
+            if failed:
+                details = "; ".join(f"{r.get('filename')}: {r.get('error')}" for r in failed)
+                raise HTTPException(400, f"Company document indexing failed: {details}")
+
         raws = __import__("scraper").smart_fetch_tenders(category=req.category, max_results=5)
         if not raws:
             return []
