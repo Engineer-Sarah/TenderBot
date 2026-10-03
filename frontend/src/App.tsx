@@ -41,7 +41,7 @@ function App() {
 
       try {
         const [list, docs] = await Promise.all([api.tenders('IT'), api.documents().catch(() => null)]);
-        if (list.length > 0) setTenders(list);
+        setTenders(list);
         if (docs) setUploadedFiles(docs);
       } catch {
         // The backend is connected even if a slower data source temporarily fails.
