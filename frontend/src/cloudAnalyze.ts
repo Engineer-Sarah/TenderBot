@@ -1,4 +1,5 @@
 import type { Tender, EligibilityStatus } from './types';
+import { companyProfile } from './mockData';
 
 const BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? '/api';
 
@@ -24,13 +25,13 @@ interface Result {
 /** Sends the uploaded company PDFs + the tenders on screen to /api/cloud-analyze and merges the scores back. */
 export async function analyzeInCloud(tenders: Tender[], files: File[]): Promise<Tender[]> {
   const pdfs = files.filter((f) => f.name.toLowerCase().endsWith('.pdf')).slice(0, 5);
-  if (pdfs.length === 0) throw new Error('Pehle "My Company" tab mein apni PDF upload karein, phir analysis chalayein.');
   if (pdfs.reduce((s, f) => s + f.size, 0) > 3_000_000) {
     throw new Error('PDFs bohat bari hain (total 3 MB se kam rakhein).');
   }
   if (tenders.length === 0) throw new Error('Koi tender maujood nahi.');
 
   const payload = {
+    profile: companyProfile,
     files: await Promise.all(
       pdfs.map(async (f) => ({ name: f.name, mimeType: 'application/pdf', data: await toBase64(f) })),
     ),
@@ -69,4 +70,47 @@ export async function analyzeInCloud(tenders: Tender[], files: File[]): Promise<
       ],
     };
   });
+}
+
+interface Extracted {
+  title?: string;
+  organization?: string;
+  description?: string;
+  deadline?: string;
+  budgetLabel?: string;
+  requirements?: string[];
+}
+
+/** Reads a tender-notice PDF with Gemini and turns it into a dashboard tender. */
+export async function extractTenderFromPdf(file: File): Promise<Tender> {
+  if (file.size > 3_000_000) throw new Error('PDF bohat bari hai (3 MB se kam rakhein).');
+  const res = await fetch(`${BASE}/extract-tender`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ file: { name: file.name, mimeType: 'application/pdf', data: await toBase64(file) } }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.detail || body.error || `Could not read the tender PDF (${res.status})`);
+  const x = body as Extracted;
+  const days = x.deadline ? Math.ceil((new Date(x.deadline).getTime() - Date.now()) / 86_400_000) : 30;
+  return {
+    id: `u${Date.now()}`,
+    title: x.title || file.name.replace(/\.pdf$/i, ''),
+    organization: x.organization || 'Uploaded tender',
+    industry: 'IT & Software',
+    location: 'Pakistan',
+    budget: 0,
+    budgetLabel: x.budgetLabel || 'N/A',
+    deadline: x.deadline || '',
+    daysLeft: Number.isFinite(days) ? days : 30,
+    matchPercentage: 0,
+    category: 'Goods & Services',
+    description: x.description || '',
+    eligibilityStatus: 'partial',
+    aiSummary: 'Uploaded tender. Press "Run AI analysis" to see how well your company matches.',
+    requirements: (x.requirements ?? []).map((l, i) => ({ id: `r${i}`, label: l, matched: false, category: 'Requirement' })),
+    documents: [],
+    referenceNo: file.name,
+    publishedDate: new Date().toISOString().slice(0, 10),
+  };
 }

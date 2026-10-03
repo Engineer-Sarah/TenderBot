@@ -1,12 +1,12 @@
-import { useState, useCallback, useMemo, useEffect } from 'react';
-import { Loader2, RefreshCw, Sparkles } from 'lucide-react';
+import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
+import { Loader2, RefreshCw, Sparkles, Upload } from 'lucide-react';
 import { Header } from '@/components/Header';
 import { Dashboard } from '@/components/Dashboard';
 import { TenderDetails } from '@/components/TenderDetails';
 import { MyCompany } from '@/components/MyCompany';
 import { mockTenders, companyProfile, initialUploadedFiles } from '@/mockData';
 import { api } from '@/api';
-import { analyzeInCloud } from '@/cloudAnalyze';
+import { analyzeInCloud, extractTenderFromPdf } from '@/cloudAnalyze';
 import type { Tender, UploadedFile, AppNotification } from '@/types';
 
 type Tab = 'dashboard' | 'details' | 'company';
@@ -27,6 +27,8 @@ function App() {
   const [connecting, setConnecting] = useState(true);
   const [loading, setLoading] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
+  const [addingTender, setAddingTender] = useState(false);
+  const tenderInput = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
 
   const loadTenders = useCallback(async () => {
@@ -71,6 +73,19 @@ function App() {
       setAnalyzing(false);
     }
   }, [tenders, companyFiles]);
+
+  const handleAddTenderPdf = useCallback(async (file: File) => {
+    setAddingTender(true);
+    setError(null);
+    try {
+      const t = await extractTenderFromPdf(file);
+      setTenders((prev) => [t, ...prev]);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not read the tender PDF');
+    } finally {
+      setAddingTender(false);
+    }
+  }, []);
 
   // Mock tenders se notifications banti hain: deadline qareeb ya high match
   const notifications = useMemo<AppNotification[]>(() => {
@@ -203,9 +218,25 @@ function App() {
                 {analyzing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
                 {analyzing ? 'Analyzing (10-40 sec)...' : 'Run AI analysis'}
               </button>
-              {companyFiles.length === 0 && (
-                <span className="text-xs text-muted">Pehle My Company mein apni PDF upload karein.</span>
-              )}
+              <button
+                onClick={() => tenderInput.current?.click()}
+                disabled={loading || analyzing || addingTender}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-edge bg-card px-3 py-1.5 text-ink hover:bg-canvas disabled:opacity-50"
+              >
+                {addingTender ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                {addingTender ? 'Reading tender...' : 'Add tender PDF'}
+              </button>
+              <input
+                ref={tenderInput}
+                type="file"
+                accept="application/pdf"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) void handleAddTenderPdf(f);
+                  e.target.value = '';
+                }}
+              />
               {error && <span className="text-red-600">{error}</span>}
             </div>
             <Dashboard tenders={tenders} onSelectTender={handleSelectTender} />

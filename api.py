@@ -383,6 +383,7 @@ class CloudTender(BaseModel):
 class CloudRequest(BaseModel):
     files: List[CloudFile] = []
     tenders: List[CloudTender]
+    profile: dict = {}
 
 
 @app.post("/api/cloud-analyze")
@@ -392,8 +393,6 @@ def cloud_analyze(req: CloudRequest):
     key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
     if not key:
         raise HTTPException(500, "GEMINI_API_KEY is not set in Vercel Environment Variables")
-    if not req.files:
-        raise HTTPException(400, "Upload at least one company PDF first (My Company tab).")
     if not req.tenders:
         raise HTTPException(400, "No tenders to analyze.")
 
@@ -404,17 +403,24 @@ def cloud_analyze(req: CloudRequest):
         types.Part.from_bytes(data=base64.b64decode(f.data), mime_type=f.mimeType or "application/pdf")
         for f in req.files[:5]
     ]
-    prompt = (
-        "You are a Pakistani government-tender eligibility analyst (PPRA rules, PEC license, "
-        "NTN, turnover, experience, certifications).\n"
+    evidence = (
         "The attached documents are the company's OWN documents and are the ONLY evidence of "
         "what the company has. Never claim a certificate, licence, turnover or experience that "
         "is not in them.\n\n"
-        "TENDERS (JSON):\n" + json.dumps([t.model_dump() for t in req.tenders], ensure_ascii=False) + "\n\n"
+        if req.files
+        else "No company documents were uploaded. Judge ONLY from this company profile (JSON): "
+        + json.dumps(req.profile, ensure_ascii=False)
+        + "\nDo not invent certificates or licences; score on sector, location and budget fit.\n\n"
+    )
+    prompt = (
+        "You are a Pakistani government-tender eligibility analyst (PPRA rules, PEC license, "
+        "NTN, turnover, experience, certifications).\n"
+        + evidence
+        + "TENDERS (JSON):\n" + json.dumps([t.model_dump() for t in req.tenders], ensure_ascii=False) + "\n\n"
         "Return ONLY a JSON array with one object per tender, exactly these keys: "
         "id (same as given), matchPercentage (integer 0-100), summary (2 sentences explaining the "
-        "score), met (list of requirements the documents prove), gaps (list of requirements "
-        "missing or unproven). The uploaded documents MUST change the score."
+        "score), met (list of requirements the company satisfies), gaps (list of requirements "
+        "missing or unproven)."
     )
     parts.append(types.Part.from_text(text=prompt))
 
@@ -435,6 +441,53 @@ def cloud_analyze(req: CloudRequest):
             results = _parse_crew_json(resp.text or "[]")
             return {"results": results, "model": m}
         except Exception as exc:  # noqa: BLE001 - try the next model
+            last = exc
+    raise HTTPException(502, f"Gemini failed: {last}")
+
+
+class ExtractRequest(BaseModel):
+    file: CloudFile
+
+
+@app.post("/api/extract-tender")
+def extract_tender(req: ExtractRequest):
+    """Reads an uploaded tender-notice PDF and returns its key fields."""
+    import base64
+
+    key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    if not key:
+        raise HTTPException(500, "GEMINI_API_KEY is not set in Vercel Environment Variables")
+
+    from google import genai
+    from google.genai import types
+
+    parts = [
+        types.Part.from_bytes(data=base64.b64decode(req.file.data), mime_type=req.file.mimeType or "application/pdf"),
+        types.Part.from_text(
+            text=(
+                "This PDF is a Pakistani government tender notice. Return ONLY one JSON object with keys: "
+                "title, organization (issuing department), description (2-3 sentence scope of work), "
+                "deadline (closing date as YYYY-MM-DD, or empty string), budgetLabel (e.g. 'PKR 10M', or 'N/A'), "
+                "requirements (list of short eligibility requirements)."
+            )
+        ),
+    ]
+    models = []
+    for m in (os.getenv("AGENT_MODEL"), "gemini-2.5-flash", "gemini-3.8-flash"):
+        if m and m not in models:
+            models.append(m)
+    client = genai.Client(api_key=key)
+    last: Exception | None = None
+    for m in models:
+        try:
+            resp = client.models.generate_content(
+                model=m,
+                contents=[types.Content(role="user", parts=parts)],
+                config=types.GenerateContentConfig(temperature=0.1, response_mime_type="application/json"),
+            )
+            data = json.loads((resp.text or "{}").strip().strip("`").removeprefix("json").strip())
+            return data[0] if isinstance(data, list) and data else data
+        except Exception as exc:  # noqa: BLE001
             last = exc
     raise HTTPException(502, f"Gemini failed: {last}")
 
